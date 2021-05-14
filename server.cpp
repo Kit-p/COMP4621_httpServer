@@ -13,6 +13,9 @@ const int SERVER_PORT = 12345;
 const int LISTENNQ = 5;
 const int MAXLINE = 8192;
 
+const std::string SP = " ";
+const std::string CRLF = "\r\n";
+
 const std::map<std::string, std::string> CONTENT_TYPES = {
     {"bmp", "image/bmp"},
     {"css", "text/css"},
@@ -54,7 +57,7 @@ const std::map<std::string, std::string> CONTENT_TYPES = {
 
 enum class HttpMethod
 {
-    UNDEFINED,
+    UNDEFINED = -1,
     GET,
     POST,
 };
@@ -67,8 +70,18 @@ public:
     std::string url;
     std::string version;
     bool isBad();
+    std::string toString();
     static HttpRequest *parse(std::string msg);
     static HttpMethod toMethod(std::string method);
+};
+
+class HttpResponse
+{
+public:
+    std::string version;
+    int status_code;
+    std::string reason_phrase;
+    std::string content_type;
 };
 
 bool startsWith(std::string, std::string);
@@ -136,7 +149,7 @@ HttpRequest *parse_request(int conn_fd)
 {
     int buffer_size = 0;
     char buf[MAXLINE] = {0};
-    std::string msg = "";
+    std::string msg{""};
     HttpRequest *request = nullptr;
 
     while (true)
@@ -199,16 +212,37 @@ bool HttpRequest::isBad()
     return false;
 }
 
+std::string HttpRequest::toString()
+{
+    std::string value{""};
+    value += "HttpRequest {";
+    value += ("\n\tisBad: " + this->isBad() ? "true" : "false");
+    value += "\n\tmethod: ";
+    switch (this->method)
+    {
+    case HttpMethod::GET:
+        value += "GET";
+        break;
+    case HttpMethod::POST:
+        value += "POST";
+        break;
+    case HttpMethod::UNDEFINED:
+    default:
+        value += "UNDEFINED";
+    }
+    value += ("\n\turl: " + this->url);
+    value += ("\n\tversion: " + this->version);
+    value += "\n}\n";
+    return value;
+}
+
 HttpRequest *HttpRequest::parse(std::string msg)
 {
     HttpRequest *request = new HttpRequest();
 
     // parse
-    const std::string sp = " ";
-    const std::string crlf = "\r\n";
-
     int start_pos = 0;
-    int end_pos = msg.find(sp, start_pos);
+    int end_pos = msg.find(SP, start_pos);
     if (start_pos >= msg.length() || end_pos == std::string::npos)
     {
         return request;
@@ -217,7 +251,7 @@ HttpRequest *HttpRequest::parse(std::string msg)
     request->method = toMethod(msg.substr(start_pos, end_pos - start_pos));
 
     start_pos = end_pos + 1;
-    end_pos = msg.find(sp, start_pos);
+    end_pos = msg.find(SP, start_pos);
     if (start_pos >= msg.length() || end_pos == std::string::npos)
     {
         return request;
@@ -230,7 +264,7 @@ HttpRequest *HttpRequest::parse(std::string msg)
     }
 
     start_pos = end_pos + 1;
-    end_pos = msg.find(crlf, start_pos);
+    end_pos = msg.find(CRLF, start_pos);
     if (start_pos >= msg.length() || end_pos == std::string::npos)
     {
         return request;
