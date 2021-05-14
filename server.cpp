@@ -121,6 +121,7 @@ int main()
         std::cout << "Connection from " << ip_str << ":" << ntohs(client_addr.sin_port) << std::endl;
 
         std::thread t(request_handler, conn_fd);
+        t.detach();
     }
 
     return 0;
@@ -129,7 +130,6 @@ int main()
 void request_handler(int conn_fd)
 {
     HttpRequest *request = parse_request(conn_fd);
-    std::cout << request->isBad() << " " << (request->method == HttpMethod::GET) << " " << request->url << " " << request->version << std::endl;
 }
 
 HttpRequest *parse_request(int conn_fd)
@@ -208,7 +208,7 @@ HttpRequest *HttpRequest::parse(std::string msg)
     const std::string crlf = "\r\n";
 
     int start_pos = 0;
-    int end_pos = msg.find(sp);
+    int end_pos = msg.find(sp, start_pos);
     if (start_pos >= msg.length() || end_pos == std::string::npos)
     {
         return request;
@@ -217,7 +217,7 @@ HttpRequest *HttpRequest::parse(std::string msg)
     request->method = toMethod(msg.substr(start_pos, end_pos - start_pos));
 
     start_pos = end_pos + 1;
-    end_pos = msg.find(sp);
+    end_pos = msg.find(sp, start_pos);
     if (start_pos >= msg.length() || end_pos == std::string::npos)
     {
         return request;
@@ -230,7 +230,7 @@ HttpRequest *HttpRequest::parse(std::string msg)
     }
 
     start_pos = end_pos + 1;
-    end_pos = msg.find(crlf);
+    end_pos = msg.find(crlf, start_pos);
     if (start_pos >= msg.length() || end_pos == std::string::npos)
     {
         return request;
