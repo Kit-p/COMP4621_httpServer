@@ -1,4 +1,5 @@
 #include <iostream>
+#include <map>
 #include <thread>
 #include <string.h>
 #include <unistd.h>
@@ -12,11 +13,50 @@ const int SERVER_PORT = 80; // use port 80 for HTTP
 const int LISTENNQ = 5;
 const int MAXLINE = 8192;
 
-enum class HttpMethods
+const std::map<std::string, std::string> CONTENT_TYPES = {
+    {"bmp", "image/bmp"},
+    {"css", "text/css"},
+    {"csv", "text/csv"},
+    {"doc", "application/msword"},
+    {"docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+    {"gz", "application/gzip"},
+    {"gif", "image/gif"},
+    {"htm", "text/html"},
+    {"html", "text/html"},
+    {"ico", "image/vnd.microsoft.icon"},
+    {"jpeg", "image/jpeg"},
+    {"jpg", "image/jpeg"},
+    {"js", "text/javascript"},
+    {"json", "application/json"},
+    {"mp3", "audio/mpeg"},
+    {"mp4", "video/mp4"},
+    {"mpeg", "video/mpeg"},
+    {"png", "image/png"},
+    {"pdf", "application/pdf"},
+    {"php", "application/x-httpd-php"},
+    {"ppt", "application/vnd.ms-powerpoint"},
+    {"pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"},
+    {"rar", "application/vnd.rar"},
+    {"sh", "application/x-sh"},
+    {"svg", "image/svg+xml"},
+    {"tar", "application/x-tar"},
+    {"txt", "text/plain"},
+    {"wav", "audio/wav"},
+    {"weba", "audio/webm"},
+    {"webm", "audio/webm"},
+    {"webp", "image/webp"},
+    {"xhtml", "application/xhtml+xml"},
+    {"xls", "application/vnd.ms-excel"},
+    {"xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+    {"zip", "application/zip"},
+    {"7z", "application/x-7z-compressed"},
+};
+
+enum class HttpMethod
 {
     UNDEFINED,
     GET,
-    POST
+    POST,
 };
 
 class HttpRequest;
@@ -136,15 +176,15 @@ bool endsWith(std::string base, std::string compare)
 class HttpRequest
 {
 public:
-    HttpRequest() : method(HttpMethods::UNDEFINED), url(""), version("") {}
+    HttpRequest() : method(HttpMethod::UNDEFINED), url(""), version("") {}
 
-    HttpMethods method;
+    HttpMethod method;
     std::string url;
     std::string version;
 
     bool isBad()
     {
-        if (this->method == HttpMethods::UNDEFINED)
+        if (this->method == HttpMethod::UNDEFINED)
             return true;
 
         if (!startsWith(this->url, "/"))
@@ -181,6 +221,10 @@ public:
         }
 
         request->url = msg.substr(start_pos, end_pos - start_pos);
+        if (request->url == "/")
+        {
+            request->url = "/index.html";
+        }
 
         start_pos = end_pos + 1;
         end_pos = msg.find(crlf);
@@ -194,14 +238,14 @@ public:
         return request;
     }
 
-    static HttpMethods toMethod(std::string method)
+    static HttpMethod toMethod(std::string method)
     {
         if (method == "GET" || method == "get")
-            return HttpMethods::GET;
+            return HttpMethod::GET;
 
         if (method == "POST" || method == "post")
-            return HttpMethods::POST;
+            return HttpMethod::POST;
 
-        return HttpMethods::UNDEFINED;
+        return HttpMethod::UNDEFINED;
     }
 };
