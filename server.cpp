@@ -69,7 +69,8 @@ public:
     HttpMethod method;
     std::string url;
     std::string version;
-    bool isBad();
+    int status();
+    bool sendResponse(int conn_fd);
     std::string toString();
     static HttpRequest *parse(std::string msg);
     static HttpMethod toMethod(std::string method);
@@ -78,10 +79,16 @@ public:
 class HttpResponse
 {
 public:
+    HttpResponse(HttpRequest *request);
     std::string version;
     int status_code;
-    std::string reason_phrase;
     std::string content_type;
+    int content_length;
+    std::string toString();
+    static const std::map<int, std::string> REASON_PHRASES;
+    static std::string toReasonPhrase(int status_code);
+    static const std::map<std::string, std::string> CONTENT_TYPES;
+    static std::string toContentType(std::string name);
 };
 
 bool startsWith(std::string, std::string);
@@ -143,6 +150,10 @@ int main()
 void request_handler(int conn_fd)
 {
     HttpRequest *request = parse_request(conn_fd);
+    request->sendResponse(conn_fd);
+
+    // TODO: keep connection if not explicitly closed
+    close(conn_fd);
 }
 
 HttpRequest *parse_request(int conn_fd)
@@ -169,7 +180,8 @@ HttpRequest *parse_request(int conn_fd)
         msg += buf;
 
         request = HttpRequest::parse(msg);
-        if (!request->isBad())
+        int status = request->status();
+        if (status == 0 || (status >= 200 && status < 400))
         {
             break;
         }
@@ -198,15 +210,61 @@ bool endsWith(std::string base, std::string compare)
     return base.compare(base.length() - compare.length(), std::string::npos, compare) == 0;
 }
 
-bool HttpRequest::isBad()
+HttpResponse::HttpResponse(HttpRequest *request)
+{
+    // TODO parse and check
+}
+
+std::string HttpResponse::toContentType(std::string name)
+{
+    int pos = name.find_last_of(".");
+    if (pos == std::string::npos || pos + 1 >= name.length())
+    {
+        return "text/directory";
+    }
+
+    std::string extension = name.substr(pos + 1);
+    std::map<std::string, std::string>::const_iterator it = HttpResponse::CONTENT_TYPES.find(extension);
+    if (it != HttpResponse::CONTENT_TYPES.cend())
+    {
+        return it->second;
+    }
+
+    return "Error: Unknown content type";
+}
+
+std::string HttpResponse::toReasonPhrase(int status_code)
+{
+    std::map<int, std::string>::const_iterator it = HttpResponse::REASON_PHRASES.find(status_code);
+    if (it != HttpResponse::REASON_PHRASES.cend())
+    {
+        return it->second;
+    }
+    return "Error: Unknown status code";
+}
+
+int HttpRequest::status()
 {
     if (this->method == HttpMethod::UNDEFINED)
-        return true;
+        return 405;
 
     if (!startsWith(this->url, "/"))
-        return true;
+        return 404;
 
     if (!startsWith(this->version, "HTTP/"))
+        return 505;
+
+    return 0; // good request
+}
+
+bool HttpRequest::sendResponse(int conn_fd)
+{
+    HttpResponse *response = new HttpResponse(this);
+    std::string msg = response->toString();
+
+    int result = write(conn_fd, msg.c_str(), msg.length());
+
+    if (result > 0)
         return true;
 
     return false;
@@ -216,7 +274,7 @@ std::string HttpRequest::toString()
 {
     std::string value{""};
     value += "HttpRequest {";
-    value += ("\n\tisBad: " + this->isBad() ? "true" : "false");
+    value += ("\n\tstatus: " + this->status());
     value += "\n\tmethod: ";
     switch (this->method)
     {
@@ -262,6 +320,10 @@ HttpRequest *HttpRequest::parse(std::string msg)
     {
         request->url = "/index.html";
     }
+    while (endsWith(request->url, "/"))
+    {
+        request->url.erase(request->url.length() - 1);
+    }
 
     start_pos = end_pos + 1;
     end_pos = msg.find(CRLF, start_pos);
@@ -285,3 +347,84 @@ HttpMethod HttpRequest::toMethod(std::string method)
 
     return HttpMethod::UNDEFINED;
 }
+
+const std::map<std::string, std::string> HttpResponse::CONTENT_TYPES = {
+    {"bmp", "image/bmp"},
+    {"css", "text/css"},
+    {"csv", "text/csv"},
+    {"doc", "application/msword"},
+    {"docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+    {"gz", "application/gzip"},
+    {"gif", "image/gif"},
+    {"htm", "text/html"},
+    {"html", "text/html"},
+    {"ico", "image/vnd.microsoft.icon"},
+    {"jpeg", "image/jpeg"},
+    {"jpg", "image/jpeg"},
+    {"js", "text/javascript"},
+    {"json", "application/json"},
+    {"mp3", "audio/mpeg"},
+    {"mp4", "video/mp4"},
+    {"mpeg", "video/mpeg"},
+    {"png", "image/png"},
+    {"pdf", "application/pdf"},
+    {"php", "application/x-httpd-php"},
+    {"ppt", "application/vnd.ms-powerpoint"},
+    {"pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"},
+    {"rar", "application/vnd.rar"},
+    {"sh", "application/x-sh"},
+    {"svg", "image/svg+xml"},
+    {"tar", "application/x-tar"},
+    {"txt", "text/plain"},
+    {"wav", "audio/wav"},
+    {"weba", "audio/webm"},
+    {"webm", "audio/webm"},
+    {"webp", "image/webp"},
+    {"xhtml", "application/xhtml+xml"},
+    {"xls", "application/vnd.ms-excel"},
+    {"xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+    {"zip", "application/zip"},
+    {"7z", "application/x-7z-compressed"},
+};
+
+const std::map<int, std::string> HttpResponse::REASON_PHRASES = {
+    {100, "Continue"},
+    {101, "Switching Protocols"},
+    {200, "OK"},
+    {201, "Created"},
+    {202, "Accepted"},
+    {203, "Non-Authoritative Information"},
+    {204, "No Content"},
+    {205, "Reset Content"},
+    {206, "Partial Content"},
+    {300, "Multiple Choices"},
+    {301, "Moved Permanently"},
+    {302, "Found"},
+    {303, "See Other"},
+    {304, "Not Modified"},
+    {305, "Use Proxy"},
+    {307, "Temporary Redirect"},
+    {400, "Bad Request"},
+    {401, "Unauthorized"},
+    {402, "Payment Required"},
+    {403, "Forbidden"},
+    {404, "Not Found"},
+    {406, "Not Acceptable"},
+    {407, "Proxy Authentication Required"},
+    {408, "Request Time-out"},
+    {409, "Conflict"},
+    {410, "Gone"},
+    {411, "Length Required"},
+    {412, "Precondition Failed"},
+    {413, "Request Entity Too Large"},
+    {414, "Request-URI Too Large"},
+    {415, "Unsupported Media Type"},
+    {416, "Requested range not satisfiable"},
+    {417, "Expectation Failed"},
+    {500, "Internal Server Error"},
+    {501, "Not Implemented"},
+    {502, "Bad Gateway"},
+    {503, "Service Unavailable"},
+    {504, "Gateway Time-out"},
+    {505, "HTTP Version not supported"},
+};
