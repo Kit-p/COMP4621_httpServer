@@ -9,7 +9,7 @@
 #include <arpa/inet.h>
 
 // Global Constants
-const int SERVER_PORT = 80; // use port 80 for HTTP
+const int SERVER_PORT = 12345;
 const int LISTENNQ = 5;
 const int MAXLINE = 8192;
 
@@ -59,7 +59,17 @@ enum class HttpMethod
     POST,
 };
 
-class HttpRequest;
+class HttpRequest
+{
+public:
+    HttpRequest() : method(HttpMethod::UNDEFINED), url(""), version("") {}
+    HttpMethod method;
+    std::string url;
+    std::string version;
+    bool isBad();
+    static HttpRequest *parse(std::string msg);
+    static HttpMethod toMethod(std::string method);
+};
 
 bool startsWith(std::string, std::string);
 bool endsWith(std::string, std::string);
@@ -69,7 +79,8 @@ void request_handler(int conn_fd);
 int main()
 {
     int server_fd, conn_fd;
-    if (server_fd = socket(AF_INET, SOCK_STREAM, 0) < 0)
+    server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd < 0)
     {
         std::cerr << "Socket creation failed!" << std::endl;
         return 0;
@@ -118,6 +129,7 @@ int main()
 void request_handler(int conn_fd)
 {
     HttpRequest *request = parse_request(conn_fd);
+    std::cout << request->isBad() << " " << (request->method == HttpMethod::GET) << " " << request->url << " " << request->version << std::endl;
 }
 
 HttpRequest *parse_request(int conn_fd)
@@ -173,79 +185,69 @@ bool endsWith(std::string base, std::string compare)
     return base.compare(base.length() - compare.length(), std::string::npos, compare) == 0;
 }
 
-class HttpRequest
+bool HttpRequest::isBad()
 {
-public:
-    HttpRequest() : method(HttpMethod::UNDEFINED), url(""), version("") {}
+    if (this->method == HttpMethod::UNDEFINED)
+        return true;
 
-    HttpMethod method;
-    std::string url;
-    std::string version;
+    if (!startsWith(this->url, "/"))
+        return true;
 
-    bool isBad()
+    if (!startsWith(this->version, "HTTP/"))
+        return true;
+
+    return false;
+}
+
+HttpRequest *HttpRequest::parse(std::string msg)
+{
+    HttpRequest *request = new HttpRequest();
+
+    // parse
+    const std::string sp = " ";
+    const std::string crlf = "\r\n";
+
+    int start_pos = 0;
+    int end_pos = msg.find(sp);
+    if (start_pos >= msg.length() || end_pos == std::string::npos)
     {
-        if (this->method == HttpMethod::UNDEFINED)
-            return true;
-
-        if (!startsWith(this->url, "/"))
-            return true;
-
-        if (!startsWith(this->version, "HTTP/"))
-            return true;
-
-        return false;
-    }
-
-    static HttpRequest *parse(std::string msg)
-    {
-        HttpRequest *request = new HttpRequest();
-
-        // parse
-        const std::string sp = " ";
-        const std::string crlf = "\r\n";
-
-        int start_pos = 0;
-        int end_pos = msg.find(sp);
-        if (start_pos >= msg.length() || end_pos == std::string::npos)
-        {
-            return request;
-        }
-
-        request->method = toMethod(msg.substr(start_pos, end_pos - start_pos));
-
-        start_pos = end_pos + 1;
-        end_pos = msg.find(sp);
-        if (start_pos >= msg.length() || end_pos == std::string::npos)
-        {
-            return request;
-        }
-
-        request->url = msg.substr(start_pos, end_pos - start_pos);
-        if (request->url == "/")
-        {
-            request->url = "/index.html";
-        }
-
-        start_pos = end_pos + 1;
-        end_pos = msg.find(crlf);
-        if (start_pos >= msg.length() || end_pos == std::string::npos)
-        {
-            return request;
-        }
-
-        request->version = msg.substr(start_pos, end_pos - start_pos);
-
         return request;
     }
 
-    static HttpMethod toMethod(std::string method)
+    request->method = toMethod(msg.substr(start_pos, end_pos - start_pos));
+
+    start_pos = end_pos + 1;
+    end_pos = msg.find(sp);
+    if (start_pos >= msg.length() || end_pos == std::string::npos)
     {
-        if (method == "GET" || method == "get")
-            return HttpMethod::GET;
-
-        if (method == "POST" || method == "post")
-            return HttpMethod::POST;
-
-        return HttpMethod::UNDEFINED;
+        return request;
     }
-};
+
+    request->url = msg.substr(start_pos, end_pos - start_pos);
+    if (request->url == "/")
+    {
+        request->url = "/index.html";
+    }
+
+    start_pos = end_pos + 1;
+    end_pos = msg.find(crlf);
+    if (start_pos >= msg.length() || end_pos == std::string::npos)
+    {
+        return request;
+    }
+
+    request->version = msg.substr(start_pos, end_pos - start_pos);
+
+    return request;
+}
+
+HttpMethod HttpRequest::toMethod(std::string method)
+{
+    if (method == "GET" || method == "get")
+        return HttpMethod::GET;
+
+    if (method == "POST" || method == "post")
+        return HttpMethod::POST;
+
+    return HttpMethod::UNDEFINED;
+}
