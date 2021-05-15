@@ -55,6 +55,7 @@ public:
     static const std::map<std::string, std::string> CONTENT_TYPES;
     static std::string toContentType(std::string name);
     static std::string currentDateTime();
+    static std::string htmlTemplateOf(int status_code);
 
 private:
     std::ifstream ifs;
@@ -119,7 +120,12 @@ int main()
 void request_handler(int conn_fd)
 {
     HttpRequest *request = parse_request(conn_fd);
-    request->sendResponse(conn_fd);
+    bool result = request->sendResponse(conn_fd);
+
+    if (!result)
+    {
+        std::cerr << "Error sending HTTP response!" << std::endl;
+    }
 
     // TODO: keep connection if not explicitly closed
     close(conn_fd);
@@ -132,7 +138,7 @@ HttpRequest *parse_request(int conn_fd)
     std::string msg{""};
     HttpRequest *request = nullptr;
 
-    while (true)
+    do
     {
         buffer_size = recv(conn_fd, buf, MAXLINE - 1, 0);
 
@@ -146,17 +152,16 @@ HttpRequest *parse_request(int conn_fd)
         {
             buf[buffer_size] = '\0';
         }
-        msg += buf;
 
-        request = HttpRequest::parse(msg);
-        int status = request->status();
-        if (status == 0 || (status >= 200 && status < 400))
-        {
-            break;
-        }
-        // ? respond with 400
-        delete request;
-        request = nullptr;
+        msg += buf;
+    } while (buffer_size > MAXLINE);
+
+    request = HttpRequest::parse(msg);
+    int status = request->status();
+    if (status == 0 || (status >= 200 && status < 400))
+    {
+        std::cerr << "Error parsing HTTP request:\n"
+                  << msg << std::endl;
     }
 
     return request;
@@ -196,7 +201,7 @@ HttpResponse::HttpResponse(HttpRequest *request)
     int pos = request->url.find_last_of("/") + 1;
     if (pos == std::string::npos || pos + 1 >= request->url.length())
     {
-        this->status_code = 404;
+        this->status_code = 400;
         std::cerr << "Unknown request object with url " << request->url << std::endl;
         return;
     }
@@ -257,8 +262,47 @@ std::string HttpResponse::toString()
     response += (this->version + SP);
     response += (std::to_string(this->status_code) + SP);
     response += (HttpResponse::toReasonPhrase(this->status_code) + CRLF);
+
     response += ("Date: " + HttpResponse::currentDateTime() + CRLF);
-    // TODO: continue
+
+    std::string contentType{"text/html"};
+
+    if (!this->ifs.is_open() || !this->ifs.good())
+    {
+        this->status_code = 404;
+    }
+    else if (this->content_type.length() > 0 && !startsWith(this->content_type, "Error"))
+    {
+        contentType = this->content_type;
+    }
+
+    response += ("Content-Type: " + contentType + CRLF);
+
+    if (this->status_code < 200 || this->status_code >= 400)
+    {
+        std::string html = HttpResponse::htmlTemplateOf(this->status_code);
+        int contentLength = html.length();
+        response += ("Content-Length: " + std::to_string(contentLength) + CRLF + CRLF);
+        response += html;
+        return response;
+    }
+
+    int contentLength = this->content_length;
+    char *buf = new char[contentLength];
+    this->ifs.read(buf, contentLength);
+    if (!this->ifs.good())
+    {
+        std::cerr << "Error reading file into buffer!" << std::endl;
+        contentLength = 0;
+    }
+
+    response += ("Content-Length: " + std::to_string(contentLength) + CRLF + CRLF);
+
+    response += std::string(buf);
+
+    delete buf;
+    buf = nullptr;
+
     return response;
 }
 
@@ -300,13 +344,21 @@ std::string HttpResponse::currentDateTime()
     return std::string{buf};
 }
 
+std::string HttpResponse::htmlTemplateOf(int status_code)
+{
+    std::string html{""};
+    html += ("<h1>" + std::to_string(status_code) + " " + HttpResponse::toReasonPhrase(status_code) + "</h1>");
+
+    return html;
+}
+
 int HttpRequest::status()
 {
     if (this->method == HttpMethod::UNDEFINED)
         return 405;
 
     if (!startsWith(this->url, "/"))
-        return 404;
+        return 400;
 
     if (!startsWith(this->version, "HTTP/"))
         return 505;
