@@ -53,6 +53,7 @@ public:
     std::string toString(bool debug = false);
     static const std::map<int, std::string> REASON_PHRASES;
     static std::string toReasonPhrase(int status_code);
+    static std::string toMessage(int status_code);
     static const std::map<std::string, std::string> CONTENT_TYPES;
     static std::string toContentType(std::string name);
     static std::string currentDateTime();
@@ -62,8 +63,9 @@ private:
     std::ifstream ifs;
 };
 
-bool startsWith(std::string, std::string);
-bool endsWith(std::string, std::string);
+bool startsWith(std::string base, std::string compare);
+bool endsWith(std::string base, std::string compare);
+bool replace(std::string &base, std::string old_value, std::string new_value);
 HttpRequest *parse_request(int conn_fd);
 void request_handler(int conn_fd);
 
@@ -193,6 +195,21 @@ bool endsWith(std::string base, std::string compare)
     return base.compare(base.length() - compare.length(), std::string::npos, compare) == 0;
 }
 
+// Replace substring in base string with specified string
+bool replace(std::string &base, std::string old_value, std::string new_value)
+{
+    int pos = base.find(old_value);
+
+    if (pos == std::string::npos)
+    {
+        return false;
+    }
+
+    base.replace(pos, old_value.length(), new_value);
+
+    return true;
+}
+
 HttpResponse::HttpResponse(const HttpRequest *request)
     : version(request->version),
       status_code(500),
@@ -225,11 +242,15 @@ HttpResponse::HttpResponse(const HttpRequest *request)
         return;
     }
 
-    // * ignore directory request for now
+    // directory listing
     if (endsWith(contentType, "directory"))
     {
-        this->status_code = 403;
-        std::cerr << "Missing file extension with name " << name << std::endl;
+        // this->status_code = 403;
+        // std::cerr << "Missing file extension with name " << name << std::endl;
+
+        this->status_code = 200;
+        this->content_type = "text/html";
+        // TODO
         return;
     }
 
@@ -360,6 +381,53 @@ std::string HttpResponse::toReasonPhrase(int status_code)
     return "Error: Unknown status code";
 }
 
+// Convert status code to user-friendly message
+std::string HttpResponse::toMessage(int status_code)
+{
+    std::string message{""};
+    switch (status_code)
+    {
+    case 400:
+        message += "Please check the request format.";
+        break;
+
+    case 403:
+        message += "Directory listing is not allowed.";
+        break;
+
+    case 404:
+        message += "The requested file or directory cannot be found.";
+        break;
+
+    case 405:
+    case 501:
+        message += "GET is currently the only supported method.";
+        break;
+
+    case 415:
+        message += "The requested file format is currently not supported.";
+        break;
+
+    case 500:
+        message += "The server is experiencing some unknown errors.";
+        break;
+
+    case 503:
+        message += "The server is currently busy. Please try again later.";
+        break;
+
+    case 505:
+        message += "The requested HTTP version is not supported. Please consider using HTTP/1.1.";
+        break;
+
+    default:
+        message += "No message available.";
+        break;
+    }
+
+    return message;
+}
+
 // Get http-date formatted string of the current datetime
 std::string HttpResponse::currentDateTime()
 {
@@ -376,9 +444,29 @@ std::string HttpResponse::currentDateTime()
 std::string HttpResponse::htmlTemplateOf(int status_code)
 {
     std::string html{""};
-    html += ("<h1>" + std::to_string(status_code) + " " + HttpResponse::toReasonPhrase(status_code) + "</h1>");
+    std::ifstream ifs{"./templates/error.html"};
 
-    // TODO: provide user-friendly messages
+    if (!ifs.is_open() || !ifs.good())
+    {
+        // basic error message
+        html += ("<h1>" + std::to_string(status_code) + " " + HttpResponse::toReasonPhrase(status_code) + "</h1>");
+        return html;
+    }
+
+    // read the error page template
+    html = std::string{(std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>()};
+
+    // substitute placeholders with actual values
+    bool result = true;
+    result = result && replace(html, "{%status_code%}", std::to_string(status_code));
+    result = result && replace(html, "{%reason_phrase%}", HttpResponse::toReasonPhrase(status_code));
+    result = result && replace(html, "{%message%}", HttpResponse::toMessage(status_code));
+
+    if (!result)
+    {
+        std::cerr << "Substituting template error.html failed!\nContent:\n"
+                  << html << std::endl;
+    }
 
     return html;
 }
@@ -387,7 +475,7 @@ std::string HttpResponse::htmlTemplateOf(int status_code)
 int HttpRequest::status() const
 {
     if (this->method == HttpMethod::UNDEFINED)
-        return 405;
+        return 501;
 
     if (!startsWith(this->url, "/"))
         return 400;
@@ -499,7 +587,7 @@ HttpMethod HttpRequest::toMethod(std::string method)
     if (method == "GET")
         return HttpMethod::GET;
 
-    // * Do not support other methods for now
+    // * ignore other methods for now
     return HttpMethod::UNDEFINED;
 }
 
@@ -566,6 +654,7 @@ const std::map<int, std::string> HttpResponse::REASON_PHRASES = {
     {402, "Payment Required"},
     {403, "Forbidden"},
     {404, "Not Found"},
+    {405, "Method Not Allowed"},
     {406, "Not Acceptable"},
     {407, "Proxy Authentication Required"},
     {408, "Request Time-out"},
