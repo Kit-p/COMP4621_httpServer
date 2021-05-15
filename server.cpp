@@ -5,7 +5,9 @@
 #include <time.h>
 #include <string.h>
 #include <unistd.h>
+#include <dirent.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -33,7 +35,7 @@ public:
     std::string url;
     std::string version;
     int status() const;
-    bool sendResponse(int conn_fd) const;
+    bool sendResponse(int conn_fd);
     std::string toString() const;
     static HttpRequest *parse(std::string msg);
     static HttpMethod toMethod(std::string method);
@@ -43,7 +45,7 @@ class HttpResponse
 {
 public:
     HttpResponse() : version(""), status_code(503), content_type("") {}
-    HttpResponse(const HttpRequest *request);
+    HttpResponse(HttpRequest *request);
     ~HttpResponse();
     std::string version;
     int status_code;
@@ -58,6 +60,7 @@ public:
     static std::string toContentType(std::string name);
     static std::string currentDateTime();
     static std::string htmlTemplateOf(int status_code);
+    static std::string htmlTemplateOf(std::string directory_path);
 
 private:
     std::ifstream ifs;
@@ -65,7 +68,8 @@ private:
 
 bool startsWith(std::string base, std::string compare);
 bool endsWith(std::string base, std::string compare);
-bool replace(std::string &base, std::string old_value, std::string new_value);
+bool replaceAll(std::string &base, std::string old_value, std::string new_value);
+bool exists(std::string path);
 HttpRequest *parse_request(int conn_fd);
 void request_handler(int conn_fd);
 
@@ -196,7 +200,7 @@ bool endsWith(std::string base, std::string compare)
 }
 
 // Replace substring in base string with specified string
-bool replace(std::string &base, std::string old_value, std::string new_value)
+bool replaceAll(std::string &base, std::string old_value, std::string new_value)
 {
     int pos = base.find(old_value);
 
@@ -205,12 +209,29 @@ bool replace(std::string &base, std::string old_value, std::string new_value)
         return false;
     }
 
-    base.replace(pos, old_value.length(), new_value);
+    do
+    {
+        base.replace(pos, old_value.length(), new_value);
+        pos = base.find(old_value);
+    } while (pos != std::string::npos);
 
     return true;
 }
 
-HttpResponse::HttpResponse(const HttpRequest *request)
+// Check if a path exists in the filesystem
+bool exists(std::string path)
+{
+    struct stat info;
+    if (stat(path.c_str(), &info) != 0)
+    {
+        return false;
+    }
+
+    // true for both file or directory
+    return true;
+}
+
+HttpResponse::HttpResponse(HttpRequest *request)
     : version(request->version),
       status_code(500),
       content_type(""),
@@ -242,16 +263,31 @@ HttpResponse::HttpResponse(const HttpRequest *request)
         return;
     }
 
-    // directory listing
+    // directory requested
     if (endsWith(contentType, "directory"))
     {
         // this->status_code = 403;
         // std::cerr << "Missing file extension with name " << name << std::endl;
 
-        this->status_code = 200;
-        this->content_type = "text/html";
-        // TODO
-        return;
+        if (!exists("." + request->url))
+        {
+            this->status_code = 404;
+            std::cerr << "Reading directory failed with path " << request->url << std::endl;
+            return;
+        }
+
+        if (!exists("." + request->url + "/index.html"))
+        {
+            // directory listing
+            this->status_code = 200;
+            this->content_type = "text/html";
+            this->content = HttpResponse::htmlTemplateOf("." + request->url);
+            return;
+        }
+
+        // redirect to index.html inside the requested directory
+        request->url += "/index.html";
+        contentType = "text/html";
     }
 
     this->content_type = contentType;
@@ -455,16 +491,73 @@ std::string HttpResponse::htmlTemplateOf(int status_code)
 
     // read the error page template
     html = std::string{(std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>()};
+    ifs.close();
 
     // substitute placeholders with actual values
     bool result = true;
-    result = result && replace(html, "{%status_code%}", std::to_string(status_code));
-    result = result && replace(html, "{%reason_phrase%}", HttpResponse::toReasonPhrase(status_code));
-    result = result && replace(html, "{%message%}", HttpResponse::toMessage(status_code));
+    result = result && replaceAll(html, "{%status_code%}", std::to_string(status_code));
+    result = result && replaceAll(html, "{%reason_phrase%}", HttpResponse::toReasonPhrase(status_code));
+    result = result && replaceAll(html, "{%message%}", HttpResponse::toMessage(status_code));
 
     if (!result)
     {
         std::cerr << "Substituting template error.html failed!\nContent:\n"
+                  << html << std::endl;
+    }
+
+    return html;
+}
+
+// Generate html template for directory listing based on the path
+std::string HttpResponse::htmlTemplateOf(std::string directory_path)
+{
+    std::string html{""};
+    std::ifstream ifs{"./templates/dirlist.html"};
+
+    if (!ifs.is_open() || !ifs.good())
+    {
+        html += ("<h1>Missing file template</h1>");
+        return html;
+    }
+
+    // read the directory listing page template
+    html = std::string{(std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>()};
+    ifs.close();
+
+    std::string list{""};
+    DIR *dir = opendir(directory_path.c_str());
+    struct dirent *ent;
+
+    if (dir == NULL)
+    {
+        return list;
+    }
+
+    while ((ent = readdir(dir)) != NULL)
+    {
+        std::string name{ent->d_name};
+        list += ("\n<li><a href=\"" + name + "\">" + name + "</a></li>");
+    }
+
+    closedir(dir);
+
+    if (startsWith(directory_path, "."))
+    {
+        directory_path.erase(0, 1);
+    }
+
+    if (!endsWith(directory_path, "/"))
+    {
+        directory_path += "/";
+    }
+
+    bool result = true;
+    result = result && replaceAll(html, "{%path%}", directory_path);
+    result = result && replaceAll(html, "{%list%}", list);
+
+    if (!result)
+    {
+        std::cerr << "Substituting template dirlist.html failed!\nContent:\n"
                   << html << std::endl;
     }
 
@@ -487,7 +580,7 @@ int HttpRequest::status() const
 }
 
 // Send a http response based on the request
-bool HttpRequest::sendResponse(int conn_fd) const
+bool HttpRequest::sendResponse(int conn_fd)
 {
     HttpResponse *response = new HttpResponse(this);
     std::string msg = response->toString();
