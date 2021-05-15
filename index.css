@@ -4,6 +4,32 @@
     box-sizing: border-box;
 }
 
-h1 {
+body {
+    padding: 2% 15%;
+}
+
+.right {
+    float: right;
+}
+
+hr {
+    margin: 2em 0;
+}
+
+h2 {
     color: red;
+}
+
+a {
+    text-decoration: none;
+    color: blue;
+}
+
+a:hover {
+    color: yellowgreen;
+}
+
+ul#resources > li {
+    padding-top: 0.2em;
+    margin-left: 1em;
 }
