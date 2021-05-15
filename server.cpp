@@ -130,6 +130,8 @@ void request_handler(int conn_fd)
 
     // TODO: keep connection if not explicitly closed
     close(conn_fd);
+    delete request;
+    request = nullptr;
 }
 
 HttpRequest *parse_request(int conn_fd)
@@ -379,6 +381,9 @@ bool HttpRequest::sendResponse(int conn_fd)
     // std::cout << response->toString(true) << std::endl;
 
     int result = write(conn_fd, msg.c_str(), msg.length());
+
+    delete response;
+    response = nullptr;
 
     if (result > 0)
         return true;
