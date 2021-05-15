@@ -1,6 +1,8 @@
 #include <iostream>
+#include <fstream>
 #include <map>
 #include <thread>
+#include <time.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/types.h>
@@ -15,45 +17,6 @@ const int MAXLINE = 8192;
 
 const std::string SP = " ";
 const std::string CRLF = "\r\n";
-
-const std::map<std::string, std::string> CONTENT_TYPES = {
-    {"bmp", "image/bmp"},
-    {"css", "text/css"},
-    {"csv", "text/csv"},
-    {"doc", "application/msword"},
-    {"docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
-    {"gz", "application/gzip"},
-    {"gif", "image/gif"},
-    {"htm", "text/html"},
-    {"html", "text/html"},
-    {"ico", "image/vnd.microsoft.icon"},
-    {"jpeg", "image/jpeg"},
-    {"jpg", "image/jpeg"},
-    {"js", "text/javascript"},
-    {"json", "application/json"},
-    {"mp3", "audio/mpeg"},
-    {"mp4", "video/mp4"},
-    {"mpeg", "video/mpeg"},
-    {"png", "image/png"},
-    {"pdf", "application/pdf"},
-    {"php", "application/x-httpd-php"},
-    {"ppt", "application/vnd.ms-powerpoint"},
-    {"pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"},
-    {"rar", "application/vnd.rar"},
-    {"sh", "application/x-sh"},
-    {"svg", "image/svg+xml"},
-    {"tar", "application/x-tar"},
-    {"txt", "text/plain"},
-    {"wav", "audio/wav"},
-    {"weba", "audio/webm"},
-    {"webm", "audio/webm"},
-    {"webp", "image/webp"},
-    {"xhtml", "application/xhtml+xml"},
-    {"xls", "application/vnd.ms-excel"},
-    {"xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
-    {"zip", "application/zip"},
-    {"7z", "application/x-7z-compressed"},
-};
 
 enum class HttpMethod
 {
@@ -79,7 +42,9 @@ public:
 class HttpResponse
 {
 public:
+    HttpResponse() : version(""), status_code(503), content_type(""), content_length(-1) {}
     HttpResponse(HttpRequest *request);
+    ~HttpResponse();
     std::string version;
     int status_code;
     std::string content_type;
@@ -89,6 +54,10 @@ public:
     static std::string toReasonPhrase(int status_code);
     static const std::map<std::string, std::string> CONTENT_TYPES;
     static std::string toContentType(std::string name);
+    static std::string currentDateTime();
+
+private:
+    std::ifstream ifs;
 };
 
 bool startsWith(std::string, std::string);
@@ -185,6 +154,7 @@ HttpRequest *parse_request(int conn_fd)
         {
             break;
         }
+        // ? respond with 400
         delete request;
         request = nullptr;
     }
@@ -211,8 +181,85 @@ bool endsWith(std::string base, std::string compare)
 }
 
 HttpResponse::HttpResponse(HttpRequest *request)
+    : version(request->version),
+      status_code(500),
+      content_type(""),
+      content_length(-1)
 {
-    // TODO parse and check
+    int status = request->status();
+    if (status >= 400)
+    {
+        this->status_code = status;
+        return;
+    }
+
+    int pos = request->url.find_last_of("/") + 1;
+    if (pos == std::string::npos || pos + 1 >= request->url.length())
+    {
+        this->status_code = 404;
+        std::cerr << "Unknown request object with url " << request->url << std::endl;
+        return;
+    }
+
+    std::string name = request->url.substr(pos + 1);
+    std::string contentType = HttpResponse::toContentType(name);
+    if (startsWith(contentType, "Error"))
+    {
+        this->status_code = 415;
+        std::cerr << "Unknown file type with name " << name << std::endl;
+        return;
+    }
+
+    if (endsWith(contentType, "directory"))
+    {
+        this->status_code = 403;
+        std::cerr << "Missing file extension with name " << name << std::endl;
+        return;
+    }
+
+    this->content_type = contentType;
+
+    auto flags = std::ifstream::in;
+    if (!startsWith(this->content_type, "text/"))
+    {
+        flags |= std::ifstream::binary;
+    }
+
+    this->ifs.open("." + request->url, flags);
+    if (!this->ifs.is_open() || !this->ifs.good())
+    {
+        this->status_code = 404;
+        std::cerr << "Reading file failed with path " << request->url << std::endl;
+        return;
+    }
+
+    this->ifs.seekg(0, this->ifs.end);
+    this->content_length = this->ifs.tellg();
+    this->ifs.seekg(0, this->ifs.beg);
+
+    if (this->content_length < 0)
+    {
+        this->status_code = 404;
+        std::cerr << "Reading file size failed with path " << request->url << std::endl;
+        return;
+    }
+}
+
+HttpResponse::~HttpResponse()
+{
+    if (this->ifs.is_open())
+        this->ifs.close();
+}
+
+std::string HttpResponse::toString()
+{
+    std::string response{""};
+    response += (this->version + SP);
+    response += (std::to_string(this->status_code) + SP);
+    response += (HttpResponse::toReasonPhrase(this->status_code) + CRLF);
+    response += ("Date: " + HttpResponse::currentDateTime() + CRLF);
+    // TODO: continue
+    return response;
 }
 
 std::string HttpResponse::toContentType(std::string name)
@@ -241,6 +288,16 @@ std::string HttpResponse::toReasonPhrase(int status_code)
         return it->second;
     }
     return "Error: Unknown status code";
+}
+
+std::string HttpResponse::currentDateTime()
+{
+    time_t localTime;
+    time(&localTime);
+    tm *gmtTime = gmtime(&localTime);
+    char buf[80];
+    strftime(buf, 80, "%a, %d %b %Y %X GMT", gmtTime);
+    return std::string{buf};
 }
 
 int HttpRequest::status()
