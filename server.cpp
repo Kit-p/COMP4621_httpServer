@@ -134,7 +134,6 @@ void request_handler(int conn_fd)
         std::cerr << "Error sending HTTP response!" << std::endl;
     }
 
-    // TODO: keep connection if not explicitly closed
     close(conn_fd);
     delete request;
     request = nullptr;
@@ -623,7 +622,7 @@ bool HttpRequest::sendResponse(int conn_fd)
     // log the constructed response
     std::cout << response->toString(true) << std::endl;
 
-    int result = write(conn_fd, msg.c_str(), msg.length());
+    int result = send(conn_fd, msg.c_str(), msg.length(), 0);
 
     delete response;
     response = nullptr;
