@@ -32,9 +32,9 @@ public:
     HttpMethod method;
     std::string url;
     std::string version;
-    int status();
-    bool sendResponse(int conn_fd);
-    std::string toString();
+    int status() const;
+    bool sendResponse(int conn_fd) const;
+    std::string toString() const;
     static HttpRequest *parse(std::string msg);
     static HttpMethod toMethod(std::string method);
 };
@@ -42,14 +42,14 @@ public:
 class HttpResponse
 {
 public:
-    HttpResponse() : version(""), status_code(503), content_type(""), content_length(-1) {}
-    HttpResponse(HttpRequest *request);
+    HttpResponse() : version(""), status_code(503), content_type("") {}
+    HttpResponse(const HttpRequest *request);
     ~HttpResponse();
     std::string version;
     int status_code;
     std::string content_type;
-    int content_length;
     std::string content;
+    int contentLength() const;
     std::string toString(bool debug = false);
     static const std::map<int, std::string> REASON_PHRASES;
     static std::string toReasonPhrase(int status_code);
@@ -188,11 +188,10 @@ bool endsWith(std::string base, std::string compare)
     return base.compare(base.length() - compare.length(), std::string::npos, compare) == 0;
 }
 
-HttpResponse::HttpResponse(HttpRequest *request)
+HttpResponse::HttpResponse(const HttpRequest *request)
     : version(request->version),
       status_code(500),
       content_type(""),
-      content_length(-1),
       content("")
 {
     int status = request->status();
@@ -202,7 +201,7 @@ HttpResponse::HttpResponse(HttpRequest *request)
         return;
     }
 
-    int pos = request->url.find_last_of("/") + 1;
+    int pos = request->url.find_last_of("/");
     if (pos == std::string::npos || pos + 1 >= request->url.length())
     {
         this->status_code = 400;
@@ -243,9 +242,8 @@ HttpResponse::HttpResponse(HttpRequest *request)
     }
 
     this->content = std::string{(std::istreambuf_iterator<char>(this->ifs)), std::istreambuf_iterator<char>()};
-    this->content_length = this->content.length();
 
-    if (this->content_length < 0)
+    if (this->contentLength() < 0)
     {
         this->status_code = 404;
         std::cerr << "Reading file size failed with path " << request->url << std::endl;
@@ -261,6 +259,11 @@ HttpResponse::~HttpResponse()
         this->ifs.close();
 }
 
+int HttpResponse::contentLength() const
+{
+    return this->content.length();
+}
+
 std::string HttpResponse::toString(bool debug)
 {
     if (debug)
@@ -270,7 +273,7 @@ std::string HttpResponse::toString(bool debug)
         value += ("\n\tversion: " + this->version);
         value += ("\n\tstatus_code: " + std::to_string(this->status_code));
         value += ("\n\tcontent_type: " + this->content_type);
-        value += ("\n\tcontent_length: " + std::to_string(this->content_length));
+        value += ("\n\tcontent_length: " + std::to_string(this->contentLength()));
         value += ("\n\tis_file_read: ");
         value += (this->ifs.is_open() && this->ifs.good()) ? "true" : "false";
         value += "\n}\n";
@@ -286,11 +289,13 @@ std::string HttpResponse::toString(bool debug)
 
     std::string contentType{"text/html"};
 
-    if (!this->ifs.is_open() || !this->ifs.good())
+    if ((!this->ifs.is_open() || !this->ifs.good()) && this->status_code < 400)
     {
         this->status_code = 404;
     }
-    else if (this->content_type.length() > 0 && !startsWith(this->content_type, "Error"))
+
+    if (this->status_code >= 200 && this->status_code < 400 &&
+        this->content_type.length() > 0 && !startsWith(this->content_type, "Error"))
     {
         contentType = this->content_type;
     }
@@ -300,13 +305,12 @@ std::string HttpResponse::toString(bool debug)
     if (this->status_code < 200 || this->status_code >= 400)
     {
         std::string html = HttpResponse::htmlTemplateOf(this->status_code);
-        int contentLength = html.length();
-        response += ("Content-Length: " + std::to_string(contentLength) + CRLF + CRLF);
+        response += ("Content-Length: " + std::to_string(html.length()) + CRLF + CRLF);
         response += html;
         return response;
     }
 
-    response += ("Content-Length: " + std::to_string(this->content_length) + CRLF + CRLF);
+    response += ("Content-Length: " + std::to_string(this->contentLength()) + CRLF + CRLF);
 
     response += this->content;
 
@@ -359,7 +363,7 @@ std::string HttpResponse::htmlTemplateOf(int status_code)
     return html;
 }
 
-int HttpRequest::status()
+int HttpRequest::status() const
 {
     if (this->method == HttpMethod::UNDEFINED)
         return 405;
@@ -373,7 +377,7 @@ int HttpRequest::status()
     return 0; // good request
 }
 
-bool HttpRequest::sendResponse(int conn_fd)
+bool HttpRequest::sendResponse(int conn_fd) const
 {
     HttpResponse *response = new HttpResponse(this);
     std::string msg = response->toString();
@@ -391,7 +395,7 @@ bool HttpRequest::sendResponse(int conn_fd)
     return false;
 }
 
-std::string HttpRequest::toString()
+std::string HttpRequest::toString() const
 {
     std::string value{""};
     value += "HttpRequest {";
