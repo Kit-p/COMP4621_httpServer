@@ -1,2 +1,2 @@
-let counter = 0;
-setInterval(() => document.querySelector("h1").innerHTML = `Hello World! ${counter} from JS`, 1000);
+let counter = 1;
+setInterval(() => { document.querySelector("h1").innerHTML = `Hello World! ${counter} from JS`; counter++; }, 1000);
