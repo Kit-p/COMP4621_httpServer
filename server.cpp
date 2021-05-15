@@ -49,6 +49,7 @@ public:
     int status_code;
     std::string content_type;
     int content_length;
+    std::string content;
     std::string toString(bool debug = false);
     static const std::map<int, std::string> REASON_PHRASES;
     static std::string toReasonPhrase(int status_code);
@@ -189,7 +190,8 @@ HttpResponse::HttpResponse(HttpRequest *request)
     : version(request->version),
       status_code(500),
       content_type(""),
-      content_length(-1)
+      content_length(-1),
+      content("")
 {
     int status = request->status();
     if (status >= 400)
@@ -238,9 +240,8 @@ HttpResponse::HttpResponse(HttpRequest *request)
         return;
     }
 
-    this->ifs.seekg(0, this->ifs.end);
-    this->content_length = static_cast<int>(this->ifs.tellg());
-    this->ifs.seekg(0, this->ifs.beg);
+    this->content = std::string{(std::istreambuf_iterator<char>(this->ifs)), std::istreambuf_iterator<char>()};
+    this->content_length = this->content.length();
 
     if (this->content_length < 0)
     {
@@ -303,21 +304,9 @@ std::string HttpResponse::toString(bool debug)
         return response;
     }
 
-    int contentLength = this->content_length;
-    char *buf = new char[contentLength];
-    this->ifs.read(buf, contentLength);
-    if (!this->ifs.good())
-    {
-        std::cerr << "Error reading file into buffer!" << std::endl;
-        contentLength = 0;
-    }
+    response += ("Content-Length: " + std::to_string(this->content_length) + CRLF + CRLF);
 
-    response += ("Content-Length: " + std::to_string(contentLength) + CRLF + CRLF);
-
-    response += std::string(buf);
-
-    delete buf;
-    buf = nullptr;
+    response += this->content;
 
     return response;
 }
