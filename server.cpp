@@ -134,6 +134,7 @@ void request_handler(int conn_fd)
     request = nullptr;
 }
 
+// Generate HttpRequest object with request message
 HttpRequest *parse_request(int conn_fd)
 {
     int buffer_size = 0;
@@ -141,6 +142,7 @@ HttpRequest *parse_request(int conn_fd)
     std::string msg{""};
     HttpRequest *request = nullptr;
 
+    // receive request message
     do
     {
         buffer_size = recv(conn_fd, buf, MAXLINE - 1, 0);
@@ -159,6 +161,7 @@ HttpRequest *parse_request(int conn_fd)
         msg += buf;
     } while (buffer_size > MAXLINE);
 
+    // parse request message
     request = HttpRequest::parse(msg);
     int status = request->status();
     if (status >= 400)
@@ -170,6 +173,7 @@ HttpRequest *parse_request(int conn_fd)
     return request;
 }
 
+// Check if base string starts with compare string
 bool startsWith(std::string base, std::string compare)
 {
     if (compare.length() <= 0 || base.length() < compare.length())
@@ -179,6 +183,7 @@ bool startsWith(std::string base, std::string compare)
     return base.compare(0, compare.length(), compare) == 0;
 }
 
+// Check if base string ends with compare string
 bool endsWith(std::string base, std::string compare)
 {
     if (compare.length() <= 0 || base.length() < compare.length())
@@ -194,6 +199,7 @@ HttpResponse::HttpResponse(const HttpRequest *request)
       content_type(""),
       content("")
 {
+    // check for bad request
     int status = request->status();
     if (status >= 400)
     {
@@ -201,6 +207,7 @@ HttpResponse::HttpResponse(const HttpRequest *request)
         return;
     }
 
+    // parse the requested object
     int pos = request->url.find_last_of("/");
     if (pos == std::string::npos || pos + 1 >= request->url.length())
     {
@@ -218,6 +225,7 @@ HttpResponse::HttpResponse(const HttpRequest *request)
         return;
     }
 
+    // * ignore directory request for now
     if (endsWith(contentType, "directory"))
     {
         this->status_code = 403;
@@ -227,6 +235,7 @@ HttpResponse::HttpResponse(const HttpRequest *request)
 
     this->content_type = contentType;
 
+    // read the requested file
     auto flags = std::ifstream::in;
     if (!startsWith(this->content_type, "text/"))
     {
@@ -241,7 +250,10 @@ HttpResponse::HttpResponse(const HttpRequest *request)
         return;
     }
 
+    // store the file content
     this->content = std::string{(std::istreambuf_iterator<char>(this->ifs)), std::istreambuf_iterator<char>()};
+
+    this->ifs.close();
 
     if (this->contentLength() < 0)
     {
@@ -250,6 +262,7 @@ HttpResponse::HttpResponse(const HttpRequest *request)
         return;
     }
 
+    // read file successful
     this->status_code = 200;
 }
 
@@ -259,13 +272,16 @@ HttpResponse::~HttpResponse()
         this->ifs.close();
 }
 
+// Get the length of the stored content
 int HttpResponse::contentLength() const
 {
     return this->content.length();
 }
 
+// Generate the response message or debug message
 std::string HttpResponse::toString(bool debug)
 {
+    // construct the debug message
     if (debug)
     {
         std::string value{""};
@@ -280,6 +296,7 @@ std::string HttpResponse::toString(bool debug)
         return value;
     }
 
+    // construct the response message
     std::string response{""};
     response += (this->version + SP);
     response += (std::to_string(this->status_code) + SP);
@@ -288,11 +305,6 @@ std::string HttpResponse::toString(bool debug)
     response += ("Date: " + HttpResponse::currentDateTime() + CRLF);
 
     std::string contentType{"text/html"};
-
-    if ((!this->ifs.is_open() || !this->ifs.good()) && this->status_code < 400)
-    {
-        this->status_code = 404;
-    }
 
     if (this->status_code >= 200 && this->status_code < 400 &&
         this->content_type.length() > 0 && !startsWith(this->content_type, "Error"))
@@ -317,8 +329,10 @@ std::string HttpResponse::toString(bool debug)
     return response;
 }
 
+// Convert filename to content type based on extension
 std::string HttpResponse::toContentType(std::string name)
 {
+    // filename is directory if no extension
     int pos = name.find_last_of(".");
     if (pos == std::string::npos || pos + 1 >= name.length())
     {
@@ -335,6 +349,7 @@ std::string HttpResponse::toContentType(std::string name)
     return "Error: Unknown content type";
 }
 
+// Convert status code to reason phrase
 std::string HttpResponse::toReasonPhrase(int status_code)
 {
     std::map<int, std::string>::const_iterator it = HttpResponse::REASON_PHRASES.find(status_code);
@@ -345,24 +360,30 @@ std::string HttpResponse::toReasonPhrase(int status_code)
     return "Error: Unknown status code";
 }
 
+// Get http-date formatted string of the current datetime
 std::string HttpResponse::currentDateTime()
 {
     time_t localTime;
     time(&localTime);
     tm *gmtTime = gmtime(&localTime);
     char buf[80];
+    // example: Wed, 19 Dec 2010 16:00:21 GMT
     strftime(buf, 80, "%a, %d %b %Y %X GMT", gmtTime);
     return std::string{buf};
 }
 
+// Generate html template based of status code
 std::string HttpResponse::htmlTemplateOf(int status_code)
 {
     std::string html{""};
     html += ("<h1>" + std::to_string(status_code) + " " + HttpResponse::toReasonPhrase(status_code) + "</h1>");
 
+    // TODO: provide user-friendly messages
+
     return html;
 }
 
+// Check the status of the request
 int HttpRequest::status() const
 {
     if (this->method == HttpMethod::UNDEFINED)
@@ -377,12 +398,14 @@ int HttpRequest::status() const
     return 0; // good request
 }
 
+// Send a http response based on the request
 bool HttpRequest::sendResponse(int conn_fd) const
 {
     HttpResponse *response = new HttpResponse(this);
     std::string msg = response->toString();
 
-    // std::cout << response->toString(true) << std::endl;
+    // log the constructed response
+    std::cout << response->toString(true) << std::endl;
 
     int result = write(conn_fd, msg.c_str(), msg.length());
 
@@ -395,6 +418,7 @@ bool HttpRequest::sendResponse(int conn_fd) const
     return false;
 }
 
+// Generate the debug message
 std::string HttpRequest::toString() const
 {
     std::string value{""};
@@ -419,11 +443,12 @@ std::string HttpRequest::toString() const
     return value;
 }
 
+// Create a HttpRequest object by parsing the request message
 HttpRequest *HttpRequest::parse(std::string msg)
 {
     HttpRequest *request = new HttpRequest();
 
-    // parse
+    // parse the method
     int start_pos = 0;
     int end_pos = msg.find(SP, start_pos);
     if (start_pos >= msg.length() || end_pos == std::string::npos)
@@ -433,6 +458,7 @@ HttpRequest *HttpRequest::parse(std::string msg)
 
     request->method = toMethod(msg.substr(start_pos, end_pos - start_pos));
 
+    // parse the url
     start_pos = end_pos + 1;
     end_pos = msg.find(SP, start_pos);
     if (start_pos >= msg.length() || end_pos == std::string::npos)
@@ -441,15 +467,20 @@ HttpRequest *HttpRequest::parse(std::string msg)
     }
 
     request->url = msg.substr(start_pos, end_pos - start_pos);
+
+    // redirect to index.html if root directory is requested
     if (request->url == "/")
     {
         request->url = "/index.html";
     }
+
+    // strip the / characters at the end
     while (endsWith(request->url, "/"))
     {
         request->url.erase(request->url.length() - 1);
     }
 
+    // parse the HTTP version
     start_pos = end_pos + 1;
     end_pos = msg.find(CRLF, start_pos);
     if (start_pos >= msg.length() || end_pos == std::string::npos)
@@ -462,17 +493,17 @@ HttpRequest *HttpRequest::parse(std::string msg)
     return request;
 }
 
+// Find the enum of the given HTTP method
 HttpMethod HttpRequest::toMethod(std::string method)
 {
-    if (method == "GET" || method == "get")
+    if (method == "GET")
         return HttpMethod::GET;
 
-    if (method == "POST" || method == "post")
-        return HttpMethod::POST;
-
+    // * Do not support other methods for now
     return HttpMethod::UNDEFINED;
 }
 
+// Define the conversion map between file extensions and content types
 const std::map<std::string, std::string> HttpResponse::CONTENT_TYPES = {
     {"bmp", "image/bmp"},
     {"css", "text/css"},
@@ -512,6 +543,7 @@ const std::map<std::string, std::string> HttpResponse::CONTENT_TYPES = {
     {"7z", "application/x-7z-compressed"},
 };
 
+// Define the conversion map between status codes and reason phrases
 const std::map<int, std::string> HttpResponse::REASON_PHRASES = {
     {100, "Continue"},
     {101, "Switching Protocols"},
