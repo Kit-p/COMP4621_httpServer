@@ -649,7 +649,7 @@ bool HttpRequest::sendResponse(int conn_fd)
 {
     HttpResponse *response = new HttpResponse(this);
     std::string msg = response->toString();
-    std::string debug = "\nconn_fd: " + std::to_string(conn_fd) + "\n" + response->toString(true);
+    std::string debug = "\nconn_fd: " + std::to_string(conn_fd) + "\n" + this->toString() + response->toString(true);
 
     int result = send(conn_fd, msg.c_str(), msg.length(), 0);
 
