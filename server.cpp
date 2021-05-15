@@ -525,21 +525,56 @@ std::string HttpResponse::htmlTemplateOf(std::string directory_path)
     ifs.close();
 
     std::string list{""};
-    DIR *dir = opendir(directory_path.c_str());
-    struct dirent *ent;
+    struct dirent **entList;
+    int count = scandir(directory_path.c_str(), &entList, NULL, alphasort);
 
-    if (dir == NULL)
+    if (count < 0)
     {
         return list;
     }
 
-    while ((ent = readdir(dir)) != NULL)
+    // print directory before files
+    for (int i = count - 1; i >= 0; --i)
     {
-        std::string name{ent->d_name};
+        std::string name{entList[i]->d_name};
+
+        // append / character after directory name
+        if (entList[i]->d_type == DT_DIR)
+        {
+            name += "/";
+        }
+        else
+        {
+            continue;
+        }
+
+        // ignore current directory and parent entry
+        if (name == "./" || name == "../")
+        {
+            continue;
+        }
+
         list += ("\n<li><a href=\"" + name + "\">" + name + "</a></li>");
     }
 
-    closedir(dir);
+    // print files after directory
+    for (int i = count - 1; i >= 0; --i)
+    {
+        std::string name{entList[i]->d_name};
+
+        // append / character after directory name
+        if (entList[i]->d_type == DT_DIR)
+        {
+            free(entList[i]);
+            continue;
+        }
+
+        free(entList[i]);
+
+        list += ("\n<li><a href=\"" + name + "\">" + name + "</a></li>");
+    }
+
+    free(entList);
 
     if (startsWith(directory_path, "."))
     {
