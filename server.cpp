@@ -49,7 +49,7 @@ public:
     int status_code;
     std::string content_type;
     int content_length;
-    std::string toString();
+    std::string toString(bool debug = false);
     static const std::map<int, std::string> REASON_PHRASES;
     static std::string toReasonPhrase(int status_code);
     static const std::map<std::string, std::string> CONTENT_TYPES;
@@ -158,7 +158,7 @@ HttpRequest *parse_request(int conn_fd)
 
     request = HttpRequest::parse(msg);
     int status = request->status();
-    if (status == 0 || (status >= 200 && status < 400))
+    if (status >= 400)
     {
         std::cerr << "Error parsing HTTP request:\n"
                   << msg << std::endl;
@@ -239,7 +239,7 @@ HttpResponse::HttpResponse(HttpRequest *request)
     }
 
     this->ifs.seekg(0, this->ifs.end);
-    this->content_length = this->ifs.tellg();
+    this->content_length = static_cast<int>(this->ifs.tellg());
     this->ifs.seekg(0, this->ifs.beg);
 
     if (this->content_length < 0)
@@ -248,6 +248,8 @@ HttpResponse::HttpResponse(HttpRequest *request)
         std::cerr << "Reading file size failed with path " << request->url << std::endl;
         return;
     }
+
+    this->status_code = 200;
 }
 
 HttpResponse::~HttpResponse()
@@ -256,8 +258,22 @@ HttpResponse::~HttpResponse()
         this->ifs.close();
 }
 
-std::string HttpResponse::toString()
+std::string HttpResponse::toString(bool debug)
 {
+    if (debug)
+    {
+        std::string value{""};
+        value += "HttpResponse {";
+        value += ("\n\tversion: " + this->version);
+        value += ("\n\tstatus_code: " + std::to_string(this->status_code));
+        value += ("\n\tcontent_type: " + this->content_type);
+        value += ("\n\tcontent_length: " + std::to_string(this->content_length));
+        value += ("\n\tis_file_read: ");
+        value += (this->ifs.is_open() && this->ifs.good()) ? "true" : "false";
+        value += "\n}\n";
+        return value;
+    }
+
     std::string response{""};
     response += (this->version + SP);
     response += (std::to_string(this->status_code) + SP);
@@ -370,6 +386,8 @@ bool HttpRequest::sendResponse(int conn_fd)
 {
     HttpResponse *response = new HttpResponse(this);
     std::string msg = response->toString();
+
+    // std::cout << response->toString(true) << std::endl;
 
     int result = write(conn_fd, msg.c_str(), msg.length());
 
