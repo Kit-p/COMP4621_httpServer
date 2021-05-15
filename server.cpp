@@ -66,6 +66,12 @@ private:
     std::ifstream ifs;
 };
 
+class Logger
+{
+public:
+    static std::ofstream log;
+};
+
 bool startsWith(std::string base, std::string compare);
 bool endsWith(std::string base, std::string compare);
 bool replaceAll(std::string &base, std::string old_value, std::string new_value);
@@ -75,11 +81,19 @@ void request_handler(int conn_fd);
 
 int main()
 {
+    Logger::log.open("info.log", std::ofstream::out | std::ofstream::trunc);
+    if (!Logger::log.is_open() || !Logger::log.good())
+    {
+        std::cerr << "Log file creation failed!" << std::endl;
+        return 0;
+    }
+
     int server_fd, conn_fd;
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0)
     {
         std::cerr << "Socket creation failed!" << std::endl;
+        Logger::log << "Socket creation failed!" << std::endl;
         return 0;
     }
 
@@ -93,12 +107,14 @@ int main()
     if (bind(server_fd, (sockaddr *)&server_addr, sizeof(sockaddr)) < 0)
     {
         std::cerr << "Bind failed!" << std::endl;
+        Logger::log << "Bind failed!" << std::endl;
         return 0;
     }
 
     if (listen(server_fd, LISTENNQ) < 0)
     {
         std::cerr << "Listen failed!" << std::endl;
+        Logger::log << "Listen failed!" << std::endl;
         return 0;
     }
 
@@ -110,16 +126,20 @@ int main()
         if (conn_fd < 0)
         {
             std::cerr << "Accept failed!" << std::endl;
+            Logger::log << "Accept failed!" << std::endl;
             return 0;
         }
 
         inet_ntop(AF_INET, &(client_addr.sin_addr), ip_str, INET_ADDRSTRLEN);
 
-        std::cout << "Connection from " << ip_str << ":" << ntohs(client_addr.sin_port) << std::endl;
+        std::cout << "Connection from " << ip_str << ":" << ntohs(client_addr.sin_port) << " with conn_fd " << conn_fd << std::endl;
+        Logger::log << "Connection from " << ip_str << ":" << ntohs(client_addr.sin_port) << " with conn_fd " << conn_fd << std::endl;
 
         std::thread t(request_handler, conn_fd);
         t.detach();
     }
+
+    Logger::log.close();
 
     return 0;
 }
@@ -131,7 +151,8 @@ void request_handler(int conn_fd)
 
     if (!result)
     {
-        std::cerr << "Error sending HTTP response!" << std::endl;
+        std::cerr << "Error sending HTTP response to conn_fd " << conn_fd << std::endl;
+        Logger::log << "Error sending HTTP response to conn_fd " << conn_fd << std::endl;
     }
 
     close(conn_fd);
@@ -154,7 +175,8 @@ HttpRequest *parse_request(int conn_fd)
 
         if (buffer_size <= 0)
         {
-            std::cerr << "Recv failed!" << std::endl;
+            std::cerr << "Recv failed from conn_fd " << conn_fd << std::endl;
+            Logger::log << "Recv failed from conn_fd " << conn_fd << std::endl;
             continue;
         }
 
@@ -173,6 +195,8 @@ HttpRequest *parse_request(int conn_fd)
     {
         std::cerr << "Error parsing HTTP request:\n"
                   << msg << std::endl;
+        Logger::log << "Error parsing HTTP request:\n"
+                    << msg << std::endl;
     }
 
     return request;
@@ -250,6 +274,7 @@ HttpResponse::HttpResponse(HttpRequest *request)
     {
         this->status_code = 400;
         std::cerr << "Unknown request object with url " << request->url << std::endl;
+        Logger::log << "Unknown request object with url " << request->url << std::endl;
         return;
     }
 
@@ -259,6 +284,7 @@ HttpResponse::HttpResponse(HttpRequest *request)
     {
         this->status_code = 415;
         std::cerr << "Unknown file type with name " << name << std::endl;
+        Logger::log << "Unknown file type with name " << name << std::endl;
         return;
     }
 
@@ -272,6 +298,7 @@ HttpResponse::HttpResponse(HttpRequest *request)
         {
             this->status_code = 404;
             std::cerr << "Reading directory failed with path " << request->url << std::endl;
+            Logger::log << "Reading directory failed with path " << request->url << std::endl;
             return;
         }
 
@@ -303,18 +330,18 @@ HttpResponse::HttpResponse(HttpRequest *request)
     {
         this->status_code = 404;
         std::cerr << "Reading file failed with path " << request->url << std::endl;
+        Logger::log << "Reading file failed with path " << request->url << std::endl;
         return;
     }
 
     // store the file content
     this->content = std::string{(std::istreambuf_iterator<char>(this->ifs)), std::istreambuf_iterator<char>()};
 
-    this->ifs.close();
-
     if (this->contentLength() < 0)
     {
         this->status_code = 404;
         std::cerr << "Reading file size failed with path " << request->url << std::endl;
+        Logger::log << "Reading file size failed with path " << request->url << std::endl;
         return;
     }
 
@@ -502,6 +529,8 @@ std::string HttpResponse::htmlTemplateOf(int status_code)
     {
         std::cerr << "Substituting template error.html failed!\nContent:\n"
                   << html << std::endl;
+        Logger::log << "Substituting template error.html failed!\nContent:\n"
+                    << html << std::endl;
     }
 
     return html;
@@ -593,6 +622,8 @@ std::string HttpResponse::htmlTemplateOf(std::string directory_path)
     {
         std::cerr << "Substituting template dirlist.html failed!\nContent:\n"
                   << html << std::endl;
+        Logger::log << "Substituting template dirlist.html failed!\nContent:\n"
+                    << html << std::endl;
     }
 
     return html;
@@ -618,19 +649,21 @@ bool HttpRequest::sendResponse(int conn_fd)
 {
     HttpResponse *response = new HttpResponse(this);
     std::string msg = response->toString();
-
-    // log the constructed response
-    std::cout << response->toString(true) << std::endl;
+    std::string debug = "\nconn_fd: " + std::to_string(conn_fd) + "\n" + response->toString(true);
 
     int result = send(conn_fd, msg.c_str(), msg.length(), 0);
 
     delete response;
     response = nullptr;
 
-    if (result > 0)
-        return true;
+    if (result < 0)
+        return false;
 
-    return false;
+    // log the constructed response
+    std::cout << debug << std::endl;
+    Logger::log << debug << std::endl;
+
+    return true;
 }
 
 // Generate the debug message
@@ -717,6 +750,9 @@ HttpMethod HttpRequest::toMethod(std::string method)
     // * ignore other methods for now
     return HttpMethod::UNDEFINED;
 }
+
+// Initialize logger
+std::ofstream Logger::log;
 
 // Define the conversion map between file extensions and content types
 const std::map<std::string, std::string> HttpResponse::CONTENT_TYPES = {
