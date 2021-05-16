@@ -30,11 +30,13 @@ enum class HttpMethod
 class HttpRequest
 {
 public:
-    HttpRequest() : method(HttpMethod::UNDEFINED), url(""), version("") {}
+    HttpRequest() : method(HttpMethod::UNDEFINED), url(""), version(""), connection("close") {}
     HttpMethod method;
     std::string url;
     std::string version;
+    std::string connection;
     int status() const;
+    bool toCloseConnection() const;
     bool sendResponse(int conn_fd);
     std::string toString() const;
     static HttpRequest *parse(std::string msg);
@@ -44,13 +46,14 @@ public:
 class HttpResponse
 {
 public:
-    HttpResponse() : version(""), status_code(503), content_type("") {}
+    HttpResponse() : version(""), status_code(503), content_type(""), connection("close") {}
     HttpResponse(HttpRequest *request);
     ~HttpResponse();
     std::string version;
     int status_code;
     std::string content_type;
     std::string content;
+    std::string connection;
     int contentLength() const;
     std::string toString(bool debug = false);
     static const std::map<int, std::string> REASON_PHRASES;
@@ -72,6 +75,7 @@ public:
     static std::ofstream log;
 };
 
+std::string toLower(std::string original);
 bool startsWith(std::string base, std::string compare);
 bool endsWith(std::string base, std::string compare);
 bool replaceAll(std::string &base, std::string old_value, std::string new_value);
@@ -146,37 +150,56 @@ int main()
 
 void request_handler(int conn_fd)
 {
-    HttpRequest *request = parse_request(conn_fd);
-    bool result = request->sendResponse(conn_fd);
+    HttpRequest *request = nullptr;
 
-    if (!result)
+    while (true)
     {
-        std::cerr << "Error sending HTTP response to conn_fd " << conn_fd << std::endl;
-        Logger::log << "Error sending HTTP response to conn_fd " << conn_fd << std::endl;
-    }
+        if (request != nullptr)
+            delete request;
+        request = parse_request(conn_fd);
 
-    close(conn_fd);
-    delete request;
-    request = nullptr;
+        if (request == nullptr)
+            continue;
+
+        bool result = request->sendResponse(conn_fd);
+
+        if (!result)
+        {
+            std::cerr << "Error sending HTTP response to conn_fd " << conn_fd << std::endl;
+            Logger::log << "Error sending HTTP response to conn_fd " << conn_fd << std::endl;
+        }
+
+        if (request->toCloseConnection())
+        {
+            delete request;
+            request = nullptr;
+            close(conn_fd);
+            break;
+        }
+    }
 }
 
 // Generate HttpRequest object with request message
 HttpRequest *parse_request(int conn_fd)
 {
     int buffer_size = 0;
-    char buf[MAXLINE] = {0};
     std::string msg{""};
     HttpRequest *request = nullptr;
 
     // receive request message
     do
     {
+        char buf[MAXLINE] = {0};
         buffer_size = recv(conn_fd, buf, MAXLINE - 1, 0);
 
-        if (buffer_size <= 0)
+        if (buffer_size < 0)
         {
             std::cerr << "Recv failed from conn_fd " << conn_fd << std::endl;
             Logger::log << "Recv failed from conn_fd " << conn_fd << std::endl;
+            return request;
+        }
+        else if (buffer_size == 0)
+        {
             continue;
         }
 
@@ -186,7 +209,7 @@ HttpRequest *parse_request(int conn_fd)
         }
 
         msg += buf;
-    } while (buffer_size > MAXLINE);
+    } while (buffer_size == 0 || buffer_size > MAXLINE);
 
     // parse request message
     request = HttpRequest::parse(msg);
@@ -200,6 +223,17 @@ HttpRequest *parse_request(int conn_fd)
     }
 
     return request;
+}
+
+// Convert to a string with all lower case characters
+std::string toLower(std::string original)
+{
+    std::string result{original};
+    for (int i = 0; i < result.length(); ++i)
+    {
+        result[i] = static_cast<char>(std::tolower(result[i]));
+    }
+    return result;
 }
 
 // Check if base string starts with compare string
@@ -258,8 +292,15 @@ HttpResponse::HttpResponse(HttpRequest *request)
     : version(request->version),
       status_code(500),
       content_type(""),
-      content("")
+      content(""),
+      connection("close")
 {
+    std::string connection{request->connection};
+    if (connection.length() > 0)
+    {
+        this->connection = connection;
+    }
+
     // check for bad request
     int status = request->status();
     if (status >= 400)
@@ -373,6 +414,7 @@ std::string HttpResponse::toString(bool debug)
         value += ("\n\tstatus_code: " + std::to_string(this->status_code));
         value += ("\n\tcontent_type: " + this->content_type);
         value += ("\n\tcontent_length: " + std::to_string(this->contentLength()));
+        value += ("\n\tconnection: " + this->connection);
         value += ("\n\tis_file_read: ");
         value += (this->ifs.is_open() && this->ifs.good()) ? "true" : "false";
         value += "\n}\n";
@@ -386,6 +428,12 @@ std::string HttpResponse::toString(bool debug)
     response += (HttpResponse::toReasonPhrase(this->status_code) + CRLF);
 
     response += ("Date: " + HttpResponse::currentDateTime() + CRLF);
+
+    response += ("Connection: " + this->connection + CRLF);
+    if (this->connection == "keep-alive")
+    {
+        response += ("Keep-Alive: timeout=5, max=1000" + CRLF);
+    }
 
     std::string contentType{"text/html"};
 
@@ -644,6 +692,12 @@ int HttpRequest::status() const
     return 0; // good request
 }
 
+// Check the connection state
+bool HttpRequest::toCloseConnection() const
+{
+    return this->connection == "close";
+}
+
 // Send a http response based on the request
 bool HttpRequest::sendResponse(int conn_fd)
 {
@@ -687,6 +741,7 @@ std::string HttpRequest::toString() const
     }
     value += ("\n\turl: " + this->url);
     value += ("\n\tversion: " + this->version);
+    value += ("\n\tconnection: " + this->connection);
     value += "\n}\n";
     return value;
 }
@@ -737,6 +792,23 @@ HttpRequest *HttpRequest::parse(std::string msg)
     }
 
     request->version = msg.substr(start_pos, end_pos - start_pos);
+
+    // parse the Connection header
+    std::string header{"Connection: "};
+    start_pos = end_pos + 1;
+    start_pos = msg.find(header, start_pos);
+    if (start_pos == std::string::npos)
+    {
+        return request;
+    }
+    start_pos += header.length();
+    end_pos = msg.find(CRLF, start_pos);
+    if (start_pos >= msg.length() || end_pos == std::string::npos)
+    {
+        return request;
+    }
+
+    request->connection = toLower(msg.substr(start_pos, end_pos - start_pos));
 
     return request;
 }
