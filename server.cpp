@@ -704,7 +704,7 @@ HttpRequest *HttpRequest::parse(std::string msg)
         return request;
     }
 
-    request->method = toMethod(msg.substr(start_pos, end_pos - start_pos));
+    request->method = HttpRequest::toMethod(msg.substr(start_pos, end_pos - start_pos));
 
     // parse the url
     start_pos = end_pos + 1;
