@@ -671,7 +671,7 @@ std::string HttpRequest::toString() const
 {
     std::string value{""};
     value += "HttpRequest {";
-    value += ("\n\tstatus: " + this->status());
+    value += ("\n\tstatus: " + std::to_string(this->status()));
     value += "\n\tmethod: ";
     switch (this->method)
     {
